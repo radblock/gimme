@@ -1,0 +1,12 @@
+{
+	"name": "gimme",
+  "description": "file upload page with lambda and s3",
+  "private": true,
+  "files": [
+    "main.js"
+  ],
+  "dependencies": {
+    "aws-sdk": "2.3.5"
+  }
+}
+
