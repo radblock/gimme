@@ -1,9 +1,12 @@
+// gimme/main.js
+
 var aws = require('aws-sdk')
+var deps = require('deps.json')
 
 /*
  * Load the S3 information from the environment variables.
  */
-var S3_BUCKET = 'u.monks.co'
+var S3_BUCKET = deps.gif_bucket
 
 exports.handler = function (event, context, callback) {
   'use strict'
