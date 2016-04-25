@@ -1,7 +1,7 @@
 // gimme/main.js
 
 var aws = require('aws-sdk')
-var deps = require('deps.json')
+var deps = require('./deps.json')
 
 /*
  * Load the S3 information from the environment variables.
