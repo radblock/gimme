@@ -1,12 +1,18 @@
 {
-	"name": "gimme",
+  "name": "gimme",
   "description": "file upload page with lambda and s3",
   "private": true,
   "files": [
     "main.js"
   ],
+  "scripts": {
+    "create": "claudia create --name radblock-signatory --region us-east-1 --api-module main --policies policies",
+    "deploy": "claudia update"
+  },
   "dependencies": {
     "aws-sdk": "2.3.5"
+  },
+  "devDependencies": {
+    "claudia": "^1.2.4"
   }
 }
-
