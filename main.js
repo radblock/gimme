@@ -6,10 +6,10 @@ var aws = require('aws-sdk')
 var ApiBuilder = require('claudia-api-builder')
 var api = new ApiBuilder()
 
-var deps = require('./deps.json')
-// {
-//   "bucket": "gifs.radblock.xyz"
-// }
+// var deps = require('./deps.json')
+var deps = {
+  'bucket': 'gifs.radblock.xyz'
+}
 
 module.exports = api
 
