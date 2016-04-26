@@ -3,14 +3,16 @@
   "description": "file upload page with lambda and s3",
   "private": true,
   "files": [
-    "main.js"
+    "main.js",
+    "deps.json"
   ],
   "scripts": {
-    "create": "claudia create --name radblock-signatory --region us-east-1 --api-module main --policies policies",
+    "create": "claudia create --name radblock-signatory --region us-east-1 --role signatory_lambda_role --api-module main",
     "deploy": "claudia update"
   },
   "dependencies": {
-    "aws-sdk": "2.3.5"
+    "aws-sdk": "2.3.5",
+    "claudia-api-builder": "^1.1.0"
   },
   "devDependencies": {
     "claudia": "^1.2.4"

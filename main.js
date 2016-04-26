@@ -1,17 +1,20 @@
 // gimme/main.js
 
+'use strict'
+
 var aws = require('aws-sdk')
+var ApiBuilder = require('claudia-api-builder')
+var api = new ApiBuilder()
+
 var deps = require('./deps.json')
+// {
+//   "bucket": "gifs.radblock.xyz"
+// }
 
-/*
- * Load the S3 information from the environment variables.
- */
-var S3_BUCKET = deps.gif_bucket
+module.exports = api
 
-exports.handler = function (event, context, callback) {
-  'use strict'
-
-  console.log('event: ', event)
+api.post('/sign', function (request) {
+  console.log('request body: ', request.body)
   // {name, type}
 
   var gen_random_string = function rrr (n) {
@@ -22,26 +25,25 @@ exports.handler = function (event, context, callback) {
       }).join('')
   }
 
-  var upload_key = gen_random_string(4) + '-' + event.name
+  var upload_key = gen_random_string(4) + '-' + request.body.name
 
   var s3 = new aws.S3()
   var s3_params = {
-    Bucket: S3_BUCKET,
+    Bucket: deps.bucket,
     Key: upload_key,
     Expires: 60,
-    ContentType: event.type,
+    ContentType: request.body.type,
     ACL: 'public-read'
   }
   console.log(s3_params)
   s3.getSignedUrl('putObject', s3_params, function (err, data) {
     if (err) {
-      callback(err)
-    } else {
-      var return_data = {
-        signed_request: data
-      }
-      callback(null, return_data)
+      return err
     }
+    var return_data = {
+      signed_request: data
+    }
+    return return_data
   })
-}
+})
 

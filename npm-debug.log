@@ -1,0 +1,49 @@
+0 info it worked if it ends with ok
+1 verbose cli [ '/usr/local/Cellar/node/5.11.0/bin/node',
+1 verbose cli   '/usr/local/bin/npm',
+1 verbose cli   'run',
+1 verbose cli   'create' ]
+2 info using npm@3.8.6
+3 info using node@v5.11.0
+4 verbose run-script [ 'precreate', 'create', 'postcreate' ]
+5 info lifecycle gimme@~precreate: gimme@
+6 silly lifecycle gimme@~precreate: no script for precreate, continuing
+7 info lifecycle gimme@~create: gimme@
+8 verbose lifecycle gimme@~create: unsafe-perm in lifecycle true
+9 verbose lifecycle gimme@~create: PATH: /usr/local/lib/node_modules/npm/bin/node-gyp-bin:/Users/ajm/Dropbox/~/Desktop/art-gifs/repos/signatory/node_modules/.bin:/usr/local/Cellar/node/5.11.0/bin:/Applications/Postgres.app/Contents/Versions/9.4/bin:/Users/ajm/Dropbox/dotfiles/bin:/Users/ajm/.rbenv/shims:/Applications/Postgres.app/Contents/Versions/9.4/bin:/Users/ajm/Dropbox/dotfiles/bin:/Users/ajm/.rbenv/shims:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/usr/local/MacGPG2/bin
+10 verbose lifecycle gimme@~create: CWD: /Users/ajm/Dropbox/~/Desktop/art-gifs/repos/signatory
+11 silly lifecycle gimme@~create: Args: [ '-c',
+11 silly lifecycle   'claudia create --name radblock-signatory --region us-east-1 --role signatory_lambda_role --api-module main' ]
+12 silly lifecycle gimme@~create: Returned: code: 1  signal: null
+13 info lifecycle gimme@~create: Failed to exec create script
+14 verbose stack Error: gimme@ create: `claudia create --name radblock-signatory --region us-east-1 --role signatory_lambda_role --api-module main`
+14 verbose stack Exit status 1
+14 verbose stack     at EventEmitter.<anonymous> (/usr/local/lib/node_modules/npm/lib/utils/lifecycle.js:239:16)
+14 verbose stack     at emitTwo (events.js:100:13)
+14 verbose stack     at EventEmitter.emit (events.js:185:7)
+14 verbose stack     at ChildProcess.<anonymous> (/usr/local/lib/node_modules/npm/lib/utils/spawn.js:24:14)
+14 verbose stack     at emitTwo (events.js:100:13)
+14 verbose stack     at ChildProcess.emit (events.js:185:7)
+14 verbose stack     at maybeClose (internal/child_process.js:850:16)
+14 verbose stack     at Process.ChildProcess._handle.onexit (internal/child_process.js:215:5)
+15 verbose pkgid gimme@
+16 verbose cwd /Users/ajm/Dropbox/~/Desktop/art-gifs/repos/signatory
+17 error Darwin 15.3.0
+18 error argv "/usr/local/Cellar/node/5.11.0/bin/node" "/usr/local/bin/npm" "run" "create"
+19 error node v5.11.0
+20 error npm  v3.8.6
+21 error code ELIFECYCLE
+22 error gimme@ create: `claudia create --name radblock-signatory --region us-east-1 --role signatory_lambda_role --api-module main`
+22 error Exit status 1
+23 error Failed at the gimme@ create script 'claudia create --name radblock-signatory --region us-east-1 --role signatory_lambda_role --api-module main'.
+23 error Make sure you have the latest version of node.js and npm installed.
+23 error If you do, this is most likely a problem with the gimme package,
+23 error not with npm itself.
+23 error Tell the author that this fails on your system:
+23 error     claudia create --name radblock-signatory --region us-east-1 --role signatory_lambda_role --api-module main
+23 error You can get information on how to open an issue for this project with:
+23 error     npm bugs gimme
+23 error Or if that isn't available, you can get their info via:
+23 error     npm owner ls gimme
+23 error There is likely additional logging output above.
+24 verbose exit [ 1, true ]
