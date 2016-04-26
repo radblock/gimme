@@ -1,0 +1,11 @@
+{
+  "lambda": {
+    "role": "signatory_lambda_role",
+    "name": "radblock-signatory",
+    "region": "us-east-1"
+  },
+  "api": {
+    "id": "lyumoiiykj",
+    "module": "main"
+  }
+}
