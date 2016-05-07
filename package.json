@@ -6,11 +6,14 @@
   ],
   "scripts": {
     "create": "claudia create --name radblock-signatory --region us-east-1 --role signatory_lambda_role --api-module main",
-    "deploy": "claudia update"
+    "deploy": "claudia update",
+    "start": "npm run deploy"
   },
   "dependencies": {
     "aws-sdk": "2.3.5",
-    "claudia-api-builder": "^1.1.0"
+    "claudia-api-builder": "^1.1.0",
+    "js-schema": "^1.0.1",
+    "scrypt": "^6.0.3"
   },
   "devDependencies": {
     "claudia": "^1.2.4"
