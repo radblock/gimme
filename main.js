@@ -6,6 +6,9 @@
 
 const aws = require('aws-sdk')
 const s3 = new aws.S3()
+const ses = new aws.SES()
+
+const random_word = require('random-word')
 
 const crypto = require('crypto')
 
@@ -19,7 +22,8 @@ module.exports = api
 const deps = {
   'user_bucket': 'radblock-users',
   'bucket': 'gifs.radblock.xyz',
-  'pending_bucket': 'radblock-pending-gifs'
+  'pending_bucket': 'radblock-pending-gifs',
+  'my_url': 'https://qcwrvld7k9.execute-api.us-east-1.amazonaws.com/latest/'
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -40,7 +44,7 @@ const passwords = (function () {
     // individual password, so larger is better. however, larger also means longer
     // to hash the password. tune so that hashing the password takes about a
     // second
-    iterations: 872
+    iterations: 10000
   }
 
   /**
@@ -52,14 +56,21 @@ const passwords = (function () {
    * @param {!String} password
    * @param {!function(?Error, ?Buffer=)} callback
    */
-  const hash = function (password) {
+  const hash = function (user) {
+    verify({
+      password: String
+    }, user)
     return new Promise(function (resolve, reject) {
+      console.log('making a hash')
       // generate a salt for pbkdf2
       crypto.randomBytes(config.saltBytes, function (err, salt) {
+        console.log('making random bytes')
         if (err) { reject('error making random bytes') }
 
-        crypto.pbkdf2(password, salt, config.iterations, config.hashBytes, function (err, hash) {
-          if (err) { reject('error pbkdf2-ing') }
+        console.time('hashing')
+        crypto.pbkdf2(user.password, salt, config.iterations, config.hashBytes, function (err, hash) {
+          console.timeEnd('hashing')
+          if (err) { return reject('error pbkdf2-ing') }
 
           let combined = new Buffer(hash.length + salt.length + 8)
 
@@ -72,8 +83,8 @@ const passwords = (function () {
           salt.copy(combined, 8)
           hash.copy(combined, salt.length + 8)
           const string = combined.toString('base64')
-          console.log('crypto hash', '|++|', string)
-          resolve(string)
+          user.kdf = string
+          resolve(user)
         })
       })
     })
@@ -91,34 +102,24 @@ const passwords = (function () {
    * @param {!function(?Error, !boolean)}
    */
   const verify = function (password, combined_string) {
-    console.log('crypto verify', password, '|++|', combined_string)
     return new Promise(function (resolve, reject) {
-      console.log('0')
       const combined = new Buffer(combined_string, 'base64')
       // extract the salt and hash from the combined buffer
-      console.log('1')
       const saltBytes = combined.readUInt32BE(0)
-      console.log('2')
       const hashBytes = combined.length - saltBytes - 8
-      console.log('3')
       const iterations = combined.readUInt32BE(4)
-      console.log('4')
       const salt = combined.slice(8, saltBytes + 8)
-      console.log('5')
       const hash = combined.toString('binary', saltBytes + 8)
 
       // verify the salt and hash against the password
-      console.log('6')
+      console.time('verifying')
       crypto.pbkdf2(password, salt, iterations, hashBytes, function (err, verify) {
-        console.log('7')
-        if (err) { reject('err pbkdf2-ing') }
-        console.log('8')
+        console.timeEnd('verifying')
+        if (err) { return reject('err pbkdf2-ing') }
         if (verify.toString('binary') === hash) {
-          console.log('9')
-          resolve(true)
+          return resolve(true)
         } else {
-          console.log('10')
-          reject('passwords don\'t match')
+          return reject('passwords don\'t match')
         }
       })
     })
@@ -153,7 +154,7 @@ api.post('/submit', function (request) {
            }))
            .then(resolve)
            .catch(function () {
-             reject({
+             return reject({
                'status': 'failure'
              })
            })
@@ -171,12 +172,12 @@ api.post('/verify', function (request) {
            .then(go_unpend)
            .then(go_save_user)
            .then(function () {
-             resolve({
+             return resolve({
                'status': 'success'
              })
            })
            .catch(function () {
-             reject({
+             return reject({
                'status': 'failure'
              })
            })
@@ -194,12 +195,12 @@ function go_check_password (user) {
     kdf: String
   }, user)
   return new Promise(function (resolve, reject) {
-    passwords.verify(user.password, user.kdf)
-      .then(function () {
-        user.password = undefined
-        resolve(user)
-      })
-      .catch(reject)
+    return passwords.verify(user.password, user.kdf)
+           .then(function () {
+             delete user.password
+             return resolve(user)
+           })
+           .catch(reject)
   })
 }
 
@@ -241,10 +242,10 @@ function go_unpend (user) {
   }, user)
   return new Promise(function (resolve, reject) {
     // move the user's pending gif into the regular bucket
-    s3.copyObject({
+    return s3.copyObject({
       Bucket: deps.bucket,
       Key: user.gif_key,
-      CopySource: `${deps.pending_bucket}/${user.gif_key}`
+      CopySource: deps.pending_bucket + '/' + user.gif_key
     }, function (err, data) {
       if (err) { return reject(err) }
       return resolve(user)
@@ -275,7 +276,7 @@ function go_get_signed_url_for (bucket, user) {
     gif_key: String
   }, user)
   return new Promise(function (resolve, reject) {
-    s3.getSignedUrl('putObject', {
+    return s3.getSignedUrl('putObject', {
       Bucket: bucket,
       Key: user.gif_key,
       ContentType: 'image/gif',
@@ -299,13 +300,23 @@ function go_create_or_find_user (request) {
   }, request)
   return new Promise(function (resolve, reject) {
     go_get_user(request)
-      .catch(function (reason) {
-        if (reason === 'bad password') {
-          return reject('bad password')
-        }
-        return go_create_user(request)
-      })
+    .catch(function (reason) {
+      if (reason === 'bad password') {
+        return reject('bad password')
+      }
+      console.log('gonna create user. request is', request)
+      go_create_user(request)
+      .then(go_validate({
+        email: String
+      }))
+      .then(go_send_code)
+      .then(go_validate({
+        code: String
+      }))
+      .then(passwords.hash)
       .then(resolve)
+    })
+    .then(resolve)
   })
 }
 
@@ -317,13 +328,13 @@ function go_verify_user (request) {
   }, request)
   return new Promise(function (resolve, reject) {
     go_get_user(request.email)
-      .then(function (user) {
-        if (user.code === request.code) {
-          return resolve(user)
-        }
-        return reject(user)
-      })
-      .catch(reject)
+    .then(function (user) {
+      if (user.code === request.code) {
+        return resolve(user)
+      }
+      return reject(user)
+    })
+    .catch(reject)
   })
 }
 
@@ -335,15 +346,8 @@ function go_create_user (request) {
     filename: String
   }, request)
   return new Promise(function (resolve, reject) {
-    // TODO send email
     request.state = 'pending'
-    request.code = '12345'
-    passwords.hash(request.password)
-      .then(function (kdf) {
-        request.kdf = kdf
-        request.password = undefined
-        resolve(request)
-      })
+    resolve(request)
   })
 }
 
@@ -354,18 +358,17 @@ function go_get_user (request) {
     password: String
   }, request)
   return new Promise(function (resolve, reject) {
-    s3.getObject({
+    return s3.getObject({
       Bucket: deps.user_bucket,
       Key: request.email
     }, function (err, data) {
       if (err) { console.log('user does not exist', err); return reject(request) }
-      let user = JSON.parse(data.Body)
-      user.password = request.password
-      go_check_password(user)
-        .then(resolve)
-        .catch(function () {
-          reject('bad password')
-        })
+      let user = merge(request, JSON.parse(data.Body))
+      return go_check_password(user)
+             .then(resolve)
+             .catch(function () {
+               return reject('bad password')
+             })
     })
   })
 }
@@ -376,7 +379,7 @@ function go_save_user (user) {
     email: String
   }, user)
   return new Promise(function (resolve, reject) {
-    s3.putObject({
+    return s3.putObject({
       Bucket: deps.user_bucket,
       Key: user.email,
       Body: JSON.stringify(user)
@@ -401,9 +404,9 @@ function randomize_filename (user) {
     filename: String
   }, user)
   user.gif_key = gen_random_string(4) + '-' + gen_random_string(4) + '/' + user.filename
-  user.filename = undefined
+  delete user.filename
   return new Promise(function (resolve, reject) {
-    resolve(user)
+    return resolve(user)
   })
 }
 
@@ -417,16 +420,67 @@ function validate (schema, input) {
   }
 }
 
+function go_send_code (user) {
+  console.log('sending a code')
+  validate({
+    email: String,
+    filename: String
+  }, user)
+  return new Promise(function (resolve, reject) {
+    console.log('in send promise')
+    user.code = [1, 2, 3].map(random_word).join('-')
+    const url = deps.my_url + '/verify?email=' + user.email + '&code=' + user.code
+    const text = '`visit ' + url + ' to finish uploading ' + user.filename
+    const params = {
+      Destination: {
+        ToAddresses: [ user.email ]
+      },
+      Message: {
+        Body: {
+          Html: {
+            Data: text,
+            Charset: 'UTF-8'
+          },
+          Text: {
+            Data: text,
+            Charset: 'UTF-8'
+          }
+        },
+        Subject: {
+          Data: 'verify your email address for radblock',
+          Charset: 'UTF-8'
+        }
+      },
+      Source: 'system@radblock.xyz'
+    }
+    console.log('about to send email', user)
+    return resolve(user)
+    ses.sendEmail(params, function (err, data) {
+      console.log('tried to send email', err, data)
+      if (err) { console.log('failed to send email', err, err.stack); return reject(user) }
+      console.log('sent email. code is', user.code)
+      resolve(user)
+    })
+  })
+}
+
 function go_validate (schema) {
   return function (input) {
     return new Promise(function (resolve, reject) {
       const is_validated = validate(schema, input)
       if (is_validated) {
-        resolve(input)
+        return resolve(input)
       } else {
-        reject(input)
+        return reject(input)
       }
     })
   }
+}
+
+function merge (a, b) {
+  let c = {}
+  for (let attrname in a) { c[attrname] = a[attrname] }
+  for (let attrname in b) { c[attrname] = b[attrname] }
+  return c
 }
 

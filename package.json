@@ -13,6 +13,7 @@
     "aws-sdk": "2.3.5",
     "claudia-api-builder": "^1.1.0",
     "js-schema": "^1.0.1",
+    "random-word": "^1.0.2",
     "scrypt": "^6.0.3"
   },
   "devDependencies": {
