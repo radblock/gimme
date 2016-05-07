@@ -56,19 +56,15 @@ const passwords = (function () {
    * @param {!String} password
    * @param {!function(?Error, ?Buffer=)} callback
    */
-  const hash = function (user) {
-    verify({
-      password: String
-    }, user)
+  const hash = function (password) {
     return new Promise(function (resolve, reject) {
       console.log('making a hash')
       // generate a salt for pbkdf2
       crypto.randomBytes(config.saltBytes, function (err, salt) {
-        console.log('making random bytes')
         if (err) { reject('error making random bytes') }
 
         console.time('hashing')
-        crypto.pbkdf2(user.password, salt, config.iterations, config.hashBytes, function (err, hash) {
+        return crypto.pbkdf2(password, salt, config.iterations, config.hashBytes, function (err, hash) {
           console.timeEnd('hashing')
           if (err) { return reject('error pbkdf2-ing') }
 
@@ -83,8 +79,7 @@ const passwords = (function () {
           salt.copy(combined, 8)
           hash.copy(combined, salt.length + 8)
           const string = combined.toString('base64')
-          user.kdf = string
-          resolve(user)
+          return resolve(string)
         })
       })
     })
@@ -245,7 +240,7 @@ function go_unpend (user) {
     return s3.copyObject({
       Bucket: deps.bucket,
       Key: user.gif_key,
-      CopySource: deps.pending_bucket + '/' + user.gif_key
+      CopySource: `${deps.pending_bucket}/${user.gif_key}`
     }, function (err, data) {
       if (err) { return reject(err) }
       return resolve(user)
@@ -304,16 +299,7 @@ function go_create_or_find_user (request) {
       if (reason === 'bad password') {
         return reject('bad password')
       }
-      console.log('gonna create user. request is', request)
       go_create_user(request)
-      .then(go_validate({
-        email: String
-      }))
-      .then(go_send_code)
-      .then(go_validate({
-        code: String
-      }))
-      .then(passwords.hash)
       .then(resolve)
     })
     .then(resolve)
@@ -346,8 +332,21 @@ function go_create_user (request) {
     filename: String
   }, request)
   return new Promise(function (resolve, reject) {
-    request.state = 'pending'
-    resolve(request)
+    let promises = [
+      go_send_code(request),
+      passwords.hash(request.password)
+    ]
+    Promise.all(promises)
+    .then(function (vals) {
+      console.log('got back', vals)
+      let user = vals[0]
+      const kdf = vals[1]
+
+      user.state = 'pending'
+      user.kdf = kdf
+      delete user.password
+      resolve(user)
+    })
   })
 }
 
@@ -427,11 +426,9 @@ function go_send_code (user) {
     filename: String
   }, user)
   return new Promise(function (resolve, reject) {
-    console.log('in send promise')
     user.code = [1, 2, 3].map(random_word).join('-')
-    const url = deps.my_url + '/verify?email=' + user.email + '&code=' + user.code
-    const text = '`visit ' + url + ' to finish uploading ' + user.filename
-    const params = {
+    const text = `visit ${deps.my_url}/verify?email=${user.email}&code=${user.code} to finish uploading ${user.filename}`
+    var params = {
       Destination: {
         ToAddresses: [ user.email ]
       },
@@ -453,12 +450,10 @@ function go_send_code (user) {
       },
       Source: 'system@radblock.xyz'
     }
-    console.log('about to send email', user)
-    return resolve(user)
     ses.sendEmail(params, function (err, data) {
       console.log('tried to send email', err, data)
-      if (err) { console.log('failed to send email', err, err.stack); return reject(user) }
-      console.log('sent email. code is', user.code)
+      if (err) { return reject('failed to send email') }
+      console.log('send email. code is', user.code)
       resolve(user)
     })
   })
