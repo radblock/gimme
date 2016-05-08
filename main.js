@@ -6,6 +6,9 @@
 
 const aws = require('aws-sdk')
 const s3 = new aws.S3()
+const ses = new aws.SES()
+
+const random_word = require('random-word')
 
 const crypto = require('crypto')
 
@@ -19,7 +22,10 @@ module.exports = api
 const deps = {
   'user_bucket': 'radblock-users',
   'bucket': 'gifs.radblock.xyz',
-  'pending_bucket': 'radblock-pending-gifs'
+  'pending_bucket': 'radblock-pending-gifs',
+  'rate_limit_bucket': 'radblock-rate-limit',
+  'my_url': 'https://89c4l3k2gj.execute-api.us-east-1.amazonaws.com/latest',
+  'website_url': 'http://radblock.xyz'
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -40,7 +46,7 @@ const passwords = (function () {
     // individual password, so larger is better. however, larger also means longer
     // to hash the password. tune so that hashing the password takes about a
     // second
-    iterations: 872
+    iterations: 10000
   }
 
   /**
@@ -52,14 +58,21 @@ const passwords = (function () {
    * @param {!String} password
    * @param {!function(?Error, ?Buffer=)} callback
    */
-  const hash = function (password) {
+  const hash = function (user) {
+    verify({
+      password: String
+    }, user)
     return new Promise(function (resolve, reject) {
+      console.log('making a hash')
       // generate a salt for pbkdf2
       crypto.randomBytes(config.saltBytes, function (err, salt) {
+        console.log('making random bytes')
         if (err) { reject('error making random bytes') }
 
-        crypto.pbkdf2(password, salt, config.iterations, config.hashBytes, function (err, hash) {
-          if (err) { reject('error pbkdf2-ing') }
+        console.time('hashing')
+        crypto.pbkdf2(user.password, salt, config.iterations, config.hashBytes, function (err, hash) {
+          console.timeEnd('hashing')
+          if (err) { return reject('error pbkdf2-ing') }
 
           let combined = new Buffer(hash.length + salt.length + 8)
 
@@ -72,8 +85,9 @@ const passwords = (function () {
           salt.copy(combined, 8)
           hash.copy(combined, salt.length + 8)
           const string = combined.toString('base64')
-          console.log('crypto hash', '|++|', string)
-          resolve(string)
+          delete user.password
+          user.kdf = string
+          resolve(user)
         })
       })
     })
@@ -91,34 +105,24 @@ const passwords = (function () {
    * @param {!function(?Error, !boolean)}
    */
   const verify = function (password, combined_string) {
-    console.log('crypto verify', password, '|++|', combined_string)
     return new Promise(function (resolve, reject) {
-      console.log('0')
       const combined = new Buffer(combined_string, 'base64')
       // extract the salt and hash from the combined buffer
-      console.log('1')
       const saltBytes = combined.readUInt32BE(0)
-      console.log('2')
       const hashBytes = combined.length - saltBytes - 8
-      console.log('3')
       const iterations = combined.readUInt32BE(4)
-      console.log('4')
       const salt = combined.slice(8, saltBytes + 8)
-      console.log('5')
       const hash = combined.toString('binary', saltBytes + 8)
 
       // verify the salt and hash against the password
-      console.log('6')
+      console.time('verifying')
       crypto.pbkdf2(password, salt, iterations, hashBytes, function (err, verify) {
-        console.log('7')
-        if (err) { reject('err pbkdf2-ing') }
-        console.log('8')
+        console.timeEnd('verifying')
+        if (err) { return reject('err pbkdf2-ing') }
         if (verify.toString('binary') === hash) {
-          console.log('9')
-          resolve(true)
+          return resolve(true)
         } else {
-          console.log('10')
-          reject('passwords don\'t match')
+          return reject('passwords don\'t match')
         }
       })
     })
@@ -146,39 +150,29 @@ api.post('/submit', function (request) {
            .then(randomize_filename)
            .then(go_save_user)
            .then(go_handle_upload)
-           .then(go_validate({
-             signed_request: String,
-             bucket: [deps.bucket, deps.pending_bucket],
-             key: String
-           }))
            .then(resolve)
-           .catch(function () {
-             reject({
-               'status': 'failure'
-             })
+           .catch(function (reason) {
+             reject(reason)
            })
   })
 })
 
-api.post('/verify', function (request) {
+api.get('/verify', function (request) {
   console.log('hit verify endpoint')
   validate({
     email: String,
     code: String
-  }, request.body)
+  }, request.queryString)
   return new Promise(function (resolve, reject) {
-    return go_verify_user(request.body)
+    return go_verify_user(request.queryString)
            .then(go_unpend)
+           .then(go_rate_limit)
            .then(go_save_user)
            .then(function () {
-             resolve({
-               'status': 'success'
-             })
+             resolve('Your email is verified!')
            })
-           .catch(function () {
-             reject({
-               'status': 'failure'
-             })
+           .catch(function (reason) {
+             reject(reason)
            })
   })
 })
@@ -195,11 +189,13 @@ function go_check_password (user) {
   }, user)
   return new Promise(function (resolve, reject) {
     passwords.verify(user.password, user.kdf)
-      .then(function () {
-        user.password = undefined
-        resolve(user)
-      })
-      .catch(reject)
+    .then(function () {
+      delete user.password
+      resolve(user)
+    })
+    .catch(function () {
+      reject('bad password')
+    })
   })
 }
 
@@ -207,23 +203,32 @@ function go_handle_upload (user) {
   console.log('handling upload')
   validate({
     gif_key: String,
-    state: ['ready', 'pending', 'rate-limited', 'banned']
+    state: ['ready', 'pending', 'rate-limited', 'banned', 'to-pend']
   }, user)
   return new Promise(function (resolve, reject) {
     switch (user.state) {
       case 'ready':
-        go_rate_limit(user)
-        go_charge_card(user)
-        return go_get_signed_url_for(deps.bucket, user)
+        return go_rate_limit(user)
+               .then(go_save_user)
+               .then(function () {
+                 return go_get_signed_url_for(deps.bucket, user)
+               })
+               .then(add_message('Your gif is uploading!'))
+               .then(resolve)
+               .catch(reject)
+
+      case 'to-pend':
+        return go_pend(user)
+               .then(go_save_user)
+               .then(function (u) {
+                 return go_get_signed_url_for(deps.pending_bucket, u)
+               })
+               .then(add_message('Your gif is uploading, but you have to verify your email address before it shows up in ppls browsers.'))
                .then(resolve)
                .catch(reject)
 
       case 'pending':
-        go_rate_limit(user)
-        go_charge_card(user)
-        return go_get_signed_url_for(deps.pending_bucket, user)
-               .then(resolve)
-               .catch(reject)
+        return reject('you need to verify your email address. go check your email.')
 
       case 'rate-limited':
         return reject('you already uploaded a gif today.')
@@ -231,6 +236,17 @@ function go_handle_upload (user) {
       case 'banned':
         return reject('you are banned.')
     }
+  })
+}
+
+function go_pend (user) {
+  console.log('pending')
+  validate({
+    state: 'to-pend'
+  }, user)
+  return new Promise(function (resolve, reject) {
+    user.state = 'pending'
+    resolve(user)
   })
 }
 
@@ -244,6 +260,7 @@ function go_unpend (user) {
     s3.copyObject({
       Bucket: deps.bucket,
       Key: user.gif_key,
+      ACL: 'public-read',
       CopySource: `${deps.pending_bucket}/${user.gif_key}`
     }, function (err, data) {
       if (err) { return reject(err) }
@@ -253,10 +270,19 @@ function go_unpend (user) {
 }
 
 function go_rate_limit (user) {
+  validate({
+    state: 'ready'
+  }, user)
   console.log('rate limiting')
   return new Promise(function (resolve, reject) {
-    user.state = 'rate-limited'
-    return resolve(user)
+    s3.putObject({
+      Key: user.email,
+      Bucket: deps.rate_limit_bucket
+    }, function (err, data) {
+      if (err) { console.log('error rate limiting', err); return reject(err) }
+      user.state = 'rate-limited'
+      return resolve(user)
+    })
   })
 }
 
@@ -299,31 +325,39 @@ function go_create_or_find_user (request) {
   }, request)
   return new Promise(function (resolve, reject) {
     go_get_user(request)
-      .catch(function (reason) {
-        if (reason === 'bad password') {
-          return reject('bad password')
-        }
-        return go_create_user(request)
-      })
-      .then(resolve)
+    .catch(function (reason) {
+      if (reason === 'bad password') {
+        return reject('bad password')
+      }
+      return go_create_user(request)
+             .then(resolve)
+    })
+    .then(go_check_password)
+    .then(resolve)
   })
 }
 
 function go_verify_user (request) {
-  console.log('verifying a user')
+  console.log('verifying a user', request)
   validate({
     email: String,
     code: String
   }, request)
   return new Promise(function (resolve, reject) {
-    go_get_user(request.email)
-      .then(function (user) {
-        if (user.code === request.code) {
-          return resolve(user)
-        }
-        return reject(user)
-      })
-      .catch(reject)
+    go_get_user(request)
+    .then(go_validate({
+      code: String,
+      state: String
+    }))
+    .then(function (user) {
+      if (user.state !== 'pending') { return reject('you can\'t be verified because you are ' + user.state) }
+      if (user.code === request.code) {
+        user.state = 'ready'
+        return resolve(user)
+      }
+      return reject(user)
+    })
+    .catch(reject)
   })
 }
 
@@ -335,23 +369,17 @@ function go_create_user (request) {
     filename: String
   }, request)
   return new Promise(function (resolve, reject) {
-    // TODO send email
-    request.state = 'pending'
-    request.code = '12345'
-    passwords.hash(request.password)
-      .then(function (kdf) {
-        request.kdf = kdf
-        request.password = undefined
-        resolve(request)
-      })
+    request.state = 'to-pend'
+    passwords.hash(request)
+    .then(go_send_code)
+    .then(resolve)
   })
 }
 
 function go_get_user (request) {
-  console.log('getting a user')
+  console.log('getting a user', request)
   validate({
-    email: String,
-    password: String
+    email: String
   }, request)
   return new Promise(function (resolve, reject) {
     s3.getObject({
@@ -359,13 +387,12 @@ function go_get_user (request) {
       Key: request.email
     }, function (err, data) {
       if (err) { console.log('user does not exist', err); return reject(request) }
-      let user = JSON.parse(data.Body)
-      user.password = request.password
-      go_check_password(user)
-        .then(resolve)
-        .catch(function () {
-          reject('bad password')
-        })
+      let user = merge(request, JSON.parse(data.Body))
+      validate({
+        email: String,
+        state: String
+      }, user)
+      resolve(user)
     })
   })
 }
@@ -401,7 +428,7 @@ function randomize_filename (user) {
     filename: String
   }, user)
   user.gif_key = gen_random_string(4) + '-' + gen_random_string(4) + '/' + user.filename
-  user.filename = undefined
+  delete user.filename
   return new Promise(function (resolve, reject) {
     resolve(user)
   })
@@ -426,6 +453,65 @@ function go_validate (schema) {
       } else {
         reject(input)
       }
+    })
+  }
+}
+
+function go_send_code (user) {
+  console.log('sending a code')
+  console.log('user', user)
+  validate({
+    email: String,
+    filename: String
+  }, user)
+  return new Promise(function (resolve, reject) {
+    console.log('in send promise')
+    user.code = [1, 2, 3].map(random_word).join('-')
+    const url = deps.website_url + '/?email=' + user.email + '&code=' + user.code
+    const params = {
+      Destination: {
+        ToAddresses: [user.email]
+      },
+      Message: {
+        Body: {
+          Html: {
+            Data: 'visit <a href="' + url + '">this page</a> to finish uploading ' + user.filename,
+            Charset: 'UTF-8'
+          },
+          Text: {
+            Data: 'visit ' + url + ' to finish uploading ' + user.filename,
+            Charset: 'UTF-8'
+          }
+        },
+        Subject: {
+          Data: 'verify your email address for radblock',
+          Charset: 'UTF-8'
+        }
+      },
+      Source: 'system@radblock.xyz'
+    }
+    console.log('about to send email', user)
+    ses.sendEmail(params, function (err, data) {
+      console.log('tried to send email', err, data)
+      if (err) { console.log('failed to send email', err, err.stack); return reject(user) }
+      console.log('sent email. code is', user.code)
+      resolve(user)
+    })
+  })
+}
+
+function merge (a, b) {
+  let c = {}
+  for (const attrname in a) { c[attrname] = a[attrname] }
+  for (const attrname in b) { c[attrname] = b[attrname] }
+  return c
+}
+
+function add_message (message) {
+  return function (a) {
+    return new Promise(function (resolve, reject) {
+      a.message = message
+      resolve(a)
     })
   }
 }
